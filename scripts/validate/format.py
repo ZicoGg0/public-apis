@@ -43,6 +43,7 @@ def get_categories_content(contents: List[str]) -> Tuple[Categories, CategoriesL
 
     categories = {}
     category_line_num = {}
+    category = None
 
     for line_num, line_content in enumerate(contents):
 
@@ -50,6 +51,9 @@ def get_categories_content(contents: List[str]) -> Tuple[Categories, CategoriesL
             category = line_content.split(anchor)[1].strip()
             categories[category] = []
             category_line_num[category] = line_num
+            continue
+
+        if category is None:
             continue
 
         if not line_content.startswith('|') or line_content.startswith('|---'):
@@ -198,7 +202,7 @@ def check_file_format(lines: List[str]) -> List[str]:
     err_msgs.extend(alphabetical_err_msgs)
 
     num_in_category = min_entries_per_category + 1
-    category = ''
+    category = None
     category_line = 0
 
     for line_num, line_content in enumerate(lines):
@@ -218,13 +222,16 @@ def check_file_format(lines: List[str]) -> List[str]:
                 err_msg = error_message(line_num, 'category header is not formatted correctly')
                 err_msgs.append(err_msg)
 
-            if num_in_category < min_entries_per_category:
+            if category is not None and num_in_category < min_entries_per_category:
                 err_msg = error_message(category_line, f'{category} category does not have the minimum {min_entries_per_category} entries (only has {num_in_category})')
                 err_msgs.append(err_msg)
 
             category = line_content.split(' ')[1]
             category_line = line_num
             num_in_category = 0
+            continue
+
+        if category is None:
             continue
 
         # skips lines that we do not care about
