@@ -1,12 +1,24 @@
 # -*- coding: utf-8 -*-
 
+import os
+import sys
+import tempfile
 import unittest
+from unittest.mock import patch, MagicMock
+
+import requests
 
 from validate.links import find_links_in_text
+from validate.links import find_links_in_file
 from validate.links import check_duplicate_links
 from validate.links import fake_user_agent
 from validate.links import get_host_from_link
 from validate.links import has_cloudflare_protection
+from validate.links import check_if_link_is_working
+from validate.links import check_if_list_of_links_are_working
+from validate.links import start_duplicate_links_checker
+from validate.links import start_links_working_checker
+from validate.links import main as links_main
 
 
 class FakeResponse():
@@ -170,3 +182,194 @@ class TestValidateLinks(unittest.TestCase):
         self.assertFalse(result1)
         self.assertFalse(result2)
         self.assertFalse(result3)
+
+    def test_has_cloudflare_protection_with_cloudflare_server_but_no_flags(self):
+        resp = FakeResponse(
+            code=403,
+            headers={'Server': 'cloudflare'},
+            text='Some other error page without flags'
+        )
+        self.assertFalse(has_cloudflare_protection(resp))
+
+    def test_find_links_in_file(self):
+        content = (
+            '## Index\n'
+            '| [Example](https://www.example.com) | Desc | No | Yes | Yes |\n'
+            '| [Another](https://www.another.com/path) | Desc | No | Yes | Yes |\n'
+        )
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as f:
+            f.write(content)
+            tmpfile = f.name
+        try:
+            links = find_links_in_file(tmpfile)
+            self.assertIsInstance(links, list)
+            self.assertEqual(len(links), 2)
+            self.assertIn('https://www.example.com', links)
+            self.assertIn('https://www.another.com/path', links)
+        finally:
+            os.unlink(tmpfile)
+
+    def test_find_links_in_file_without_index_section(self):
+        content = (
+            'Some header\n'
+            'https://www.example.com\n'
+        )
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as f:
+            f.write(content)
+            tmpfile = f.name
+        try:
+            links = find_links_in_file(tmpfile)
+            self.assertIsInstance(links, list)
+            self.assertGreater(len(links), 0)
+        finally:
+            os.unlink(tmpfile)
+
+    @patch('validate.links.requests.get')
+    def test_check_if_link_is_working_with_status_200(self, mock_get):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {'Server': 'nginx'}
+        mock_resp.text = 'OK'
+        mock_get.return_value = mock_resp
+
+        has_error, error_message = check_if_link_is_working('https://www.example.com')
+        self.assertFalse(has_error)
+        self.assertEqual(error_message, '')
+
+    @patch('validate.links.requests.get')
+    def test_check_if_link_is_working_with_status_404(self, mock_get):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        mock_resp.headers = {'Server': 'nginx'}
+        mock_resp.text = 'Not Found'
+        mock_get.return_value = mock_resp
+
+        has_error, error_message = check_if_link_is_working('https://www.example.com')
+        self.assertTrue(has_error)
+        self.assertIn('ERR:CLT', error_message)
+        self.assertIn('404', error_message)
+
+    @patch('validate.links.requests.get')
+    def test_check_if_link_is_working_with_cloudflare_protection(self, mock_get):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        mock_resp.headers = {'Server': 'cloudflare'}
+        mock_resp.text = '403 Forbidden Cloudflare We are checking your browser...'
+        mock_resp.__class__ = requests.models.Response
+        mock_get.return_value = mock_resp
+
+        has_error, error_message = check_if_link_is_working('https://www.example.com')
+        self.assertFalse(has_error)
+        self.assertEqual(error_message, '')
+
+    @patch('validate.links.requests.get')
+    def test_check_if_link_is_working_with_ssl_error(self, mock_get):
+        mock_get.side_effect = requests.exceptions.SSLError('SSL certificate verify failed')
+
+        has_error, error_message = check_if_link_is_working('https://www.example.com')
+        self.assertTrue(has_error)
+        self.assertIn('ERR:SSL', error_message)
+
+    @patch('validate.links.requests.get')
+    def test_check_if_link_is_working_with_connection_error(self, mock_get):
+        mock_get.side_effect = requests.exceptions.ConnectionError('Connection refused')
+
+        has_error, error_message = check_if_link_is_working('https://www.example.com')
+        self.assertTrue(has_error)
+        self.assertIn('ERR:CNT', error_message)
+
+    @patch('validate.links.requests.get')
+    def test_check_if_link_is_working_with_timeout(self, mock_get):
+        mock_get.side_effect = TimeoutError('Connection timed out')
+
+        has_error, error_message = check_if_link_is_working('https://www.example.com')
+        self.assertTrue(has_error)
+        self.assertIn('ERR:TMO', error_message)
+
+    @patch('validate.links.requests.get')
+    def test_check_if_link_is_working_with_too_many_redirects(self, mock_get):
+        mock_get.side_effect = requests.exceptions.TooManyRedirects('Exceeded max redirects')
+
+        has_error, error_message = check_if_link_is_working('https://www.example.com')
+        self.assertTrue(has_error)
+        self.assertIn('ERR:TMR', error_message)
+
+    @patch('validate.links.requests.get')
+    def test_check_if_link_is_working_with_unknown_error(self, mock_get):
+        mock_get.side_effect = Exception('Unknown error')
+
+        has_error, error_message = check_if_link_is_working('https://www.example.com')
+        self.assertTrue(has_error)
+        self.assertIn('ERR:UKN', error_message)
+
+    @patch('validate.links.check_if_link_is_working')
+    def test_check_if_list_of_links_are_working_all_ok(self, mock_check):
+        mock_check.return_value = (False, '')
+
+        errors = check_if_list_of_links_are_working(['https://a.com', 'https://b.com'])
+        self.assertIsInstance(errors, list)
+        self.assertEqual(len(errors), 0)
+
+    @patch('validate.links.check_if_link_is_working')
+    def test_check_if_list_of_links_are_working_with_errors(self, mock_check):
+        mock_check.side_effect = [
+            (True, 'ERR:CLT: 404 : https://a.com'),
+            (False, ''),
+            (True, 'ERR:TMO: https://c.com'),
+        ]
+
+        errors = check_if_list_of_links_are_working([
+            'https://a.com', 'https://b.com', 'https://c.com'
+        ])
+        self.assertIsInstance(errors, list)
+        self.assertEqual(len(errors), 2)
+        self.assertIn('ERR:CLT', errors[0])
+        self.assertIn('ERR:TMO', errors[1])
+
+    @patch('builtins.print')
+    def test_start_duplicate_links_checker_no_duplicates(self, mock_print):
+        links = ['https://a.com', 'https://b.com']
+        start_duplicate_links_checker(links)
+        mock_print.assert_any_call('No duplicate links.')
+
+    @patch('builtins.print')
+    def test_start_duplicate_links_checker_with_duplicates(self, mock_print):
+        links = ['https://a.com', 'https://a.com', 'https://b.com']
+        with self.assertRaises(SystemExit) as ctx:
+            start_duplicate_links_checker(links)
+        self.assertEqual(ctx.exception.code, 1)
+
+    @patch('validate.links.check_if_list_of_links_are_working')
+    @patch('builtins.print')
+    def test_start_links_working_checker_all_ok(self, mock_print, mock_check):
+        mock_check.return_value = []
+        start_links_working_checker(['https://a.com'])
+        mock_print.assert_any_call('Checking if 1 links are working...')
+
+    @patch('validate.links.check_if_list_of_links_are_working')
+    @patch('builtins.print')
+    def test_start_links_working_checker_with_errors(self, mock_print, mock_check):
+        mock_check.return_value = ['ERR:CLT: 404 : https://a.com']
+        with self.assertRaises(SystemExit) as ctx:
+            start_links_working_checker(['https://a.com'])
+        self.assertEqual(ctx.exception.code, 1)
+
+    @patch('validate.links.start_links_working_checker')
+    @patch('validate.links.start_duplicate_links_checker')
+    @patch('validate.links.find_links_in_file')
+    def test_main_with_only_duplicate_checker(self, mock_find, mock_dup, mock_work):
+        mock_find.return_value = ['https://a.com']
+        links_main('fake.md', only_duplicate_links_checker=True)
+        mock_find.assert_called_once_with('fake.md')
+        mock_dup.assert_called_once()
+        mock_work.assert_not_called()
+
+    @patch('validate.links.start_links_working_checker')
+    @patch('validate.links.start_duplicate_links_checker')
+    @patch('validate.links.find_links_in_file')
+    def test_main_with_full_check(self, mock_find, mock_dup, mock_work):
+        mock_find.return_value = ['https://a.com']
+        links_main('fake.md', only_duplicate_links_checker=False)
+        mock_find.assert_called_once_with('fake.md')
+        mock_dup.assert_called_once()
+        mock_work.assert_called_once()
