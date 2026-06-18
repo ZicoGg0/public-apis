@@ -2,7 +2,9 @@
 
 import re
 import sys
+import socket
 import random
+import ipaddress
 from typing import List, Tuple
 
 import requests
@@ -92,6 +94,20 @@ def get_host_from_link(link: str) -> str:
     return host
 
 
+def is_private_url(link: str) -> bool:
+    """Check if a URL resolves to a private/internal IP address (SSRF protection)."""
+    host = get_host_from_link(link)
+    try:
+        addr_info = socket.getaddrinfo(host, None)
+        for family, _, _, _, sockaddr in addr_info:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return True
+    except (socket.gaierror, ValueError):
+        pass
+    return False
+
+
 def has_cloudflare_protection(resp: Response) -> bool:
     """Checks if there is any cloudflare protection in the response.
 
@@ -162,6 +178,11 @@ def check_if_link_is_working(link: str) -> Tuple[bool, str]:
 
     has_error = False
     error_message = ''
+
+    if is_private_url(link):
+        has_error = True
+        error_message = f'ERR:SSRF: {link} resolves to a private/internal address'
+        return (has_error, error_message)
 
     try:
         resp = requests.get(link, timeout=25, headers={
