@@ -37,7 +37,7 @@ curl -L "$DIFF_URL" -o diff.txt
 echo "------- BEGIN DIFF -------"
 cat diff.txt
 echo "-------- END DIFF --------"
-cat diff.txt | egrep "\+" > additions.txt
+grep "^+" diff.txt > additions.txt
 
 echo "------ BEGIN ADDITIONS -----"
 cat additions.txt
