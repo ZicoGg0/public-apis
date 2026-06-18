@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 
+import os
+import tempfile
 import unittest
+from unittest.mock import patch
 
 from validate.format import error_message
 from validate.format import get_categories_content
@@ -12,6 +15,7 @@ from validate.format import check_https, https_keys
 from validate.format import check_cors, cors_keys
 from validate.format import check_entry
 from validate.format import check_file_format, min_entries_per_category, num_segments
+from validate.format import main as format_main
 
 
 class TestValidadeFormat(unittest.TestCase):
@@ -464,3 +468,85 @@ class TestValidadeFormat(unittest.TestCase):
         self.assertEqual(len(err_msgs), 1)
         err_msg = err_msgs[0]
         self.assertEqual(err_msg, expected_err_msg)
+
+    def test_check_file_format_with_malformed_category_header(self):
+        incorrect_format = [
+            '## Index',
+            '* [A](#a)',
+            '',
+            '### ',  # anchor with trailing space but no category name
+            'API | Description | Auth | HTTPS | CORS |',
+            '|---|---|---|---|---|',
+            '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |',
+            '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |',
+            '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |',
+        ]
+
+        err_msgs = check_file_format(lines=incorrect_format)
+        has_malformed_err = any('category header is not formatted correctly' in msg for msg in err_msgs)
+        self.assertTrue(has_malformed_err)
+
+    def test_main_with_valid_file(self):
+        content = (
+            '## Index\n'
+            '* [A](#a)\n'
+            '\n'
+            '### A\n'
+            'API | Description | Auth | HTTPS | CORS |\n'
+            '|---|---|---|---|---|\n'
+            '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |\n'
+            '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |\n'
+            '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |\n'
+        )
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as f:
+            f.write(content)
+            tmpfile = f.name
+        try:
+            format_main(tmpfile)
+        finally:
+            os.unlink(tmpfile)
+
+    def test_main_with_invalid_file(self):
+        content = (
+            '## Index\n'
+            '\n'
+            '### A\n'
+            'API | Description | Auth | HTTPS | CORS |\n'
+            '|---|---|---|---|---|\n'
+            '| [AA](https://www.ex.com) | desc. | yes | yes | yes |\n'
+        )
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as f:
+            f.write(content)
+            tmpfile = f.name
+        try:
+            with self.assertRaises(SystemExit) as ctx:
+                format_main(tmpfile)
+            self.assertEqual(ctx.exception.code, 1)
+        finally:
+            os.unlink(tmpfile)
+
+    def test_get_categories_content_with_no_categories(self):
+        lines = ['Just some text', 'No categories here']
+        categories, line_nums = get_categories_content(lines)
+        self.assertEqual(categories, {})
+        self.assertEqual(line_nums, {})
+
+    def test_get_categories_content_with_non_link_entries(self):
+        lines = [
+            '### A',
+            'API | Description | Auth | HTTPS | CORS |',
+            '|---|---|---|---|---|',
+            '| PlainText | Desc | No | Yes | Yes |',
+        ]
+        categories, line_nums = get_categories_content(lines)
+        self.assertIn('A', categories)
+        self.assertEqual(categories['A'], [])
+
+    def test_check_description_with_multiple_errors(self):
+        desc = 'a' * (max_description_length + 1) + '.'
+        err_msgs = check_description(0, desc)
+        self.assertGreaterEqual(len(err_msgs), 2)
+        has_cap_err = any('not capitalized' in m for m in err_msgs)
+        has_len_err = any('should not exceed' in m for m in err_msgs)
+        self.assertTrue(has_cap_err)
+        self.assertTrue(has_len_err)
