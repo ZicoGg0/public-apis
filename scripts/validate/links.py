@@ -8,6 +8,19 @@ from typing import List, Tuple
 import requests
 from requests.models import Response
 
+try:
+    from validate.utils import (
+        read_file_content,
+        parse_cli_args,
+        exit_on_errors,
+    )
+except ImportError:
+    from utils import (
+        read_file_content,
+        parse_cli_args,
+        exit_on_errors,
+    )
+
 
 def find_links_in_text(text: str) -> List[str]:
     """Find links in a text and return a list of URLs."""
@@ -26,12 +39,11 @@ def find_links_in_text(text: str) -> List[str]:
 def find_links_in_file(filename: str) -> List[str]:
     """Find links in a file and return a list of URLs from text file."""
 
-    with open(filename, mode='r', encoding='utf-8') as file:
-        readme = file.read()
-        index_section = readme.find('## Index')
-        if index_section == -1:
-            index_section = 0
-        content = readme[index_section:]
+    readme = read_file_content(filename)
+    index_section = readme.find('## Index')
+    if index_section == -1:
+        index_section = 0
+    content = readme[index_section:]
 
     links = find_links_in_text(content)
 
@@ -217,11 +229,7 @@ def start_duplicate_links_checker(links: List[str]) -> None:
 
     if has_duplicate_link:
         print(f'Found duplicate links:')
-
-        for duplicate_link in duplicates_links:
-            print(duplicate_link)
-
-        sys.exit(1)
+        exit_on_errors(duplicates_links)
     else:
         print('No duplicate links.')
 
@@ -232,14 +240,9 @@ def start_links_working_checker(links: List[str]) -> None:
 
     errors = check_if_list_of_links_are_working(links)
     if errors:
-
         num_errors = len(errors)
         print(f'Apparently {num_errors} links are not working properly. See in:')
-
-        for error_message in errors:
-            print(error_message)
-
-        sys.exit(1)
+        exit_on_errors(errors)
 
 
 def main(filename: str, only_duplicate_links_checker: bool) -> None:
@@ -253,14 +256,14 @@ def main(filename: str, only_duplicate_links_checker: bool) -> None:
 
 
 if __name__ == '__main__':
-    num_args = len(sys.argv)
-    only_duplicate_links_checker = False
+    args = parse_cli_args(
+        min_args=1,
+        usage_message='No .md file passed'
+    )
 
-    if num_args < 2:
-        print('No .md file passed')
-        sys.exit(1)
-    elif num_args == 3:
-        third_arg = sys.argv[2].lower()
+    only_duplicate_links_checker = False
+    if len(args) >= 2:
+        third_arg = args[1].lower()
 
         if third_arg == '-odlc' or third_arg == '--only_duplicate_links_checker':
             only_duplicate_links_checker = True
@@ -268,6 +271,6 @@ if __name__ == '__main__':
             print(f'Third invalid argument. Usage: python {__file__} [-odlc | --only_duplicate_links_checker]')
             sys.exit(1)
 
-    filename = sys.argv[1]
+    filename = args[0]
 
     main(filename, only_duplicate_links_checker)
