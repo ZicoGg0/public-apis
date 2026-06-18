@@ -46,10 +46,12 @@ LINK_FILE=additions.txt
 
 # Validate links
 echo "Running link validation on additions..."
+set +e
 python scripts/validate/links.py "$LINK_FILE"
+VALIDATION_EXIT_CODE=$?
+set -e
 
-# Vebosity
-if [[ $? != 0 ]]; then
+if [[ $VALIDATION_EXIT_CODE != 0 ]]; then
     echo "link validation failed on additions!"
     exit 1
 else

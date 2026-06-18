@@ -43,6 +43,7 @@ def get_categories_content(contents: List[str]) -> Tuple[Categories, CategoriesL
 
     categories = {}
     category_line_num = {}
+    category = None
 
     for line_num, line_content in enumerate(contents):
 
@@ -55,14 +56,19 @@ def get_categories_content(contents: List[str]) -> Tuple[Categories, CategoriesL
         if not line_content.startswith('|') or line_content.startswith('|---'):
             continue
 
-        raw_title = [
-            raw_content.strip() for raw_content in line_content.split('|')[1:-1]
-        ][0]
+        if category is None:
+            continue
+
+        segments = [raw_content.strip() for raw_content in line_content.split('|')[1:-1]]
+        if not segments:
+            continue
+
+        raw_title = segments[0]
 
         title_match = link_re.match(raw_title)
         if title_match:
-                title = title_match.group(1).upper()
-                categories[category].append(title)
+            title = title_match.group(1).upper()
+            categories[category].append(title)
 
     return (categories, category_line_num)
 
@@ -107,6 +113,11 @@ def check_title(line_num: int, raw_title: str) -> List[str]:
 def check_description(line_num: int, description: str) -> List[str]:
 
     err_msgs = []
+
+    if not description:
+        err_msg = error_message(line_num, 'description is empty')
+        err_msgs.append(err_msg)
+        return err_msgs
 
     first_char = description[0]
     if first_char.upper() != first_char:
@@ -247,14 +258,25 @@ def check_file_format(lines: List[str]) -> List[str]:
         segments = [segment.strip() for segment in segments]
         entry_err_msgs = check_entry(line_num, segments)
         err_msgs.extend(entry_err_msgs)
+
+    if category and num_in_category < min_entries_per_category:
+        err_msg = error_message(category_line, f'{category} category does not have the minimum {min_entries_per_category} entries (only has {num_in_category})')
+        err_msgs.append(err_msg)
     
     return err_msgs
 
 
 def main(filename: str) -> None:
 
-    with open(filename, mode='r', encoding='utf-8') as file:
-        lines = list(line.rstrip() for line in file)
+    try:
+        with open(filename, mode='r', encoding='utf-8') as file:
+            lines = list(line.rstrip() for line in file)
+    except FileNotFoundError:
+        print(f'File not found: {filename}')
+        sys.exit(1)
+    except OSError as err:
+        print(f'Error reading file {filename}: {err}')
+        sys.exit(1)
 
     file_format_err_msgs = check_file_format(lines)
 

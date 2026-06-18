@@ -26,12 +26,20 @@ def find_links_in_text(text: str) -> List[str]:
 def find_links_in_file(filename: str) -> List[str]:
     """Find links in a file and return a list of URLs from text file."""
 
-    with open(filename, mode='r', encoding='utf-8') as file:
-        readme = file.read()
-        index_section = readme.find('## Index')
-        if index_section == -1:
-            index_section = 0
-        content = readme[index_section:]
+    try:
+        with open(filename, mode='r', encoding='utf-8') as file:
+            readme = file.read()
+    except FileNotFoundError:
+        print(f'File not found: {filename}')
+        sys.exit(1)
+    except OSError as err:
+        print(f'Error reading file {filename}: {err}')
+        sys.exit(1)
+
+    index_section = readme.find('## Index')
+    if index_section == -1:
+        index_section = 0
+    content = readme[index_section:]
 
     links = find_links_in_text(content)
 
@@ -183,7 +191,7 @@ def check_if_link_is_working(link: str) -> Tuple[bool, str]:
         has_error = True
         error_message = f'ERR:CNT: {error} : {link}'
 
-    except (TimeoutError, requests.exceptions.ConnectTimeout):
+    except (TimeoutError, requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
         has_error = True
         error_message = f'ERR:TMO: {link}'
 
@@ -191,7 +199,7 @@ def check_if_link_is_working(link: str) -> Tuple[bool, str]:
         has_error = True
         error_message = f'ERR:TMR: {error} : {link}'
 
-    except (Exception, requests.exceptions.RequestException) as error:
+    except requests.exceptions.RequestException as error:
         has_error = True
         error_message = f'ERR:UKN: {error} : {link}'
 
