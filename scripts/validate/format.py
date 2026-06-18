@@ -5,6 +5,27 @@ import sys
 from string import punctuation
 from typing import List, Tuple, Dict
 
+try:
+    from validate.utils import (
+        error_message,
+        check_field_value,
+        read_file_lines,
+        parse_cli_args,
+        exit_on_errors,
+        is_category_header,
+        is_table_entry,
+    )
+except ImportError:
+    from utils import (
+        error_message,
+        check_field_value,
+        read_file_lines,
+        parse_cli_args,
+        exit_on_errors,
+        is_category_header,
+        is_table_entry,
+    )
+
 # Temporary replacement
 # The descriptions that contain () at the end must adapt to the new policy later
 punctuation = punctuation.replace('()', '')
@@ -34,11 +55,6 @@ Categories = Dict[str, APIList]
 CategoriesLineNumber = Dict[str, int]
 
 
-def error_message(line_number: int, message: str) -> str:
-    line = line_number + 1
-    return f'(L{line:03d}) {message}'
-
-
 def get_categories_content(contents: List[str]) -> Tuple[Categories, CategoriesLineNumber]:
 
     categories = {}
@@ -46,13 +62,13 @@ def get_categories_content(contents: List[str]) -> Tuple[Categories, CategoriesL
 
     for line_num, line_content in enumerate(contents):
 
-        if line_content.startswith(anchor):
+        if is_category_header(line_content, anchor):
             category = line_content.split(anchor)[1].strip()
             categories[category] = []
             category_line_num[category] = line_num
             continue
 
-        if not line_content.startswith('|') or line_content.startswith('|---'):
+        if not is_table_entry(line_content):
             continue
 
         raw_title = [
@@ -143,25 +159,11 @@ def check_auth(line_num: int, auth: str) -> List[str]:
 
 
 def check_https(line_num: int, https: str) -> List[str]:
-
-    err_msgs = []
-
-    if https not in https_keys:
-        err_msg = error_message(line_num, f'{https} is not a valid HTTPS option')
-        err_msgs.append(err_msg)
-
-    return err_msgs
+    return check_field_value(line_num, https, https_keys, 'HTTPS')
 
 
 def check_cors(line_num: int, cors: str) -> List[str]:
-
-    err_msgs = []
-
-    if cors not in cors_keys:
-        err_msg = error_message(line_num, f'{cors} is not a valid CORS option')
-        err_msgs.append(err_msg)
-    
-    return err_msgs
+    return check_field_value(line_num, cors, cors_keys, 'CORS')
 
 
 def check_entry(line_num: int, segments: List[str]) -> List[str]:
@@ -208,7 +210,7 @@ def check_file_format(lines: List[str]) -> List[str]:
             category_title_in_index.append(category_title_match.group(1))
 
         # check each category for the minimum number of entries
-        if line_content.startswith(anchor):
+        if is_category_header(line_content, anchor):
             category_match = anchor_re.match(line_content)
             if category_match:
                 if category_match.group(1) not in category_title_in_index:
@@ -228,7 +230,7 @@ def check_file_format(lines: List[str]) -> List[str]:
             continue
 
         # skips lines that we do not care about
-        if not line_content.startswith('|') or line_content.startswith('|---'):
+        if not is_table_entry(line_content):
             continue
 
         num_in_category += 1
@@ -253,25 +255,19 @@ def check_file_format(lines: List[str]) -> List[str]:
 
 def main(filename: str) -> None:
 
-    with open(filename, mode='r', encoding='utf-8') as file:
-        lines = list(line.rstrip() for line in file)
+    lines = read_file_lines(filename)
 
     file_format_err_msgs = check_file_format(lines)
-
-    if file_format_err_msgs:
-        for err_msg in file_format_err_msgs:
-            print(err_msg)
-        sys.exit(1)
+    exit_on_errors(file_format_err_msgs)
 
 
 if __name__ == '__main__':
 
-    num_args = len(sys.argv)
+    args = parse_cli_args(
+        min_args=1,
+        usage_message='No .md file passed (file should contain Markdown table syntax)'
+    )
 
-    if num_args < 2:
-        print('No .md file passed (file should contain Markdown table syntax)')
-        sys.exit(1)
-
-    filename = sys.argv[1]
+    filename = args[0]
 
     main(filename)
